@@ -130,9 +130,12 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 	struct position pos = vehicle_path[start][dest][step];
 	while(!is_position_outside(pos)){
 		char preempted_thread_id = preemption_table[pos.row][pos.col];
+		/* preempt position if current vehicle's priority is higher */
 		if(preempted_thread_id > vi->id){
-			// 자리를 선점한다
 			preemption_table[pos.row][pos.col] = vi->id;
+		}
+		else {
+			break;
 		}
 		pos = vehicle_path[start][dest][++step];
 	}
@@ -154,7 +157,6 @@ void vehicle_loop(void *_vi)
 	vi->position.row = vi->position.col = -1;
 	vi->state = VEHICLE_STATUS_READY;
 	step = 0;
-	preempt(start, dest, step, vi);
 	while (1) {
 		/* preempt next position */
 		preempt(start, dest, step, vi);

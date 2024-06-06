@@ -7,6 +7,8 @@
 #define VEHICLE_STATUS_RUNNING	1
 #define VEHICLE_STATUS_FINISHED	2
 
+char preemption_table[7][7];
+
 struct vehicle_info {
 	char id;
 	char state;

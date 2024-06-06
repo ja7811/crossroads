@@ -3,9 +3,12 @@
 
 #include "threads/thread.h"
 #include "threads/synch.h"
+#include "threads/interrupt.h"
 #include "projects/crossroads/vehicle.h"
 #include "projects/crossroads/map.h"
 #include "projects/crossroads/ats.h"
+
+const char PREEMPT_INIT = 127;
 
 /* path. A:0 B:1 C:2 D:3 */
 const struct position vehicle_path[4][4][12] = {
@@ -67,6 +70,8 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
 	if (vi->state == VEHICLE_STATUS_RUNNING) {
 		/* check termination */
 		if (is_position_outside(pos_next)) {
+			/* release current preemption */
+			preempt_release(vi);
 			/* actual move */
 			vi->position.row = vi->position.col = -1;
 			/* release previous */
@@ -75,12 +80,17 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
 		}
 	}
 
+	/* return if next position is preemptied by other thread */
+	if (preemption_table[pos_next.row][pos_next.col] != vi->id) 
+		return -1;
 	/* lock next position */
 	lock_acquire(&vi->map_locks[pos_next.row][pos_next.col]);
 	if (vi->state == VEHICLE_STATUS_READY) {
 		/* start this vehicle */
 		vi->state = VEHICLE_STATUS_RUNNING;
 	} else {
+		/* release current preemption */
+		preempt_release(vi);
 		/* release current position */
 		lock_release(&vi->map_locks[pos_cur.row][pos_cur.col]);
 	}
@@ -92,6 +102,36 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
 
 void init_on_mainthread(int thread_cnt){
 	/* Called once before spawning threads */
+	memset(preemption_table, PREEMPT_INIT, 7 * 7 * sizeof(char));
+}
+
+/* release current preemption */
+void preempt_release(struct vehicle_info *vi){
+	enum intr_level old_level;
+	old_level = intr_disable();
+
+	int i = vi->position.row, j = vi->position.col;
+	if(preemption_table[i][j] == vi->id){
+		preemption_table[i][j] = PREEMPT_INIT;
+	}
+
+	intr_set_level(old_level);
+}
+
+void preempt(int start, int dest, int step, struct vehicle_info *vi){
+	enum intr_level old_level;
+	old_level = intr_disable ();
+
+	struct position pos = vehicle_path[start][dest][step];
+	if (!is_position_outside(pos)) {
+		char preempted_thread_id = preemption_table[pos.row][pos.col];
+		if(preempted_thread_id > vi->id){
+			// 자리를 선점한다
+			preemption_table[pos.row][pos.col] = vi->id;
+		}
+	}
+
+	intr_set_level (old_level);
 }
 
 void vehicle_loop(void *_vi)
@@ -106,9 +146,12 @@ void vehicle_loop(void *_vi)
 
 	vi->position.row = vi->position.col = -1;
 	vi->state = VEHICLE_STATUS_READY;
-
 	step = 0;
+	preempt(start, dest, step, vi);
 	while (1) {
+		/* preempt next position */
+		preempt(start, dest, step, vi);
+
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
 		if (res == 1) {
@@ -119,6 +162,9 @@ void vehicle_loop(void *_vi)
 		if (res == 0) {
 			break;
 		}
+
+		/* preempt next position */
+		preempt(start, dest, step, vi);
 
 		/* unitstep change! */
 		unitstep_changed();

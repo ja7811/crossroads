@@ -59,6 +59,11 @@ static int is_position_outside(struct position pos)
 	return (pos.row == -1 || pos.col == -1);
 }
 
+static int is_position_center(struct position pos)
+{
+	return (2 <= pos.row && pos.row <= 4) && (2 <= pos.col && pos.col <= 4);
+}
+
 /* return 0:termination, 1:success, -1:fail */
 static int try_move(int start, int dest, int step, struct vehicle_info *vi)
 {
@@ -123,13 +128,15 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 	old_level = intr_disable ();
 
 	struct position pos = vehicle_path[start][dest][step];
-	if (!is_position_outside(pos)) {
+	while(!is_position_outside(pos)){
 		char preempted_thread_id = preemption_table[pos.row][pos.col];
 		if(preempted_thread_id > vi->id){
 			// 자리를 선점한다
 			preemption_table[pos.row][pos.col] = vi->id;
 		}
+		pos = vehicle_path[start][dest][++step];
 	}
+	
 
 	intr_set_level (old_level);
 }

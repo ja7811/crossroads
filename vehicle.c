@@ -108,6 +108,31 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
 void init_on_mainthread(int thread_cnt){
 	/* Called once before spawning threads */
 	memset(preemption_table, PREEMPT_INIT, 7 * 7 * sizeof(char));
+	/* Initialize variables */
+	finished_threads = 0;
+	running_threads = thread_cnt;
+	vehicles_to_move = running_threads;
+	printf("running threads : &d\n", running_threads);
+	lock_running_threads_writers = (struct lock *)malloc(sizeof(struct lock));
+	lock_running_threads_readers = (struct lock *)malloc(sizeof(struct lock));
+	step_lock = (struct lock *)malloc(sizeof(struct lock));
+	lock_init(lock_running_threads_writers);
+	lock_init(lock_running_threads_readers);
+	lock_init(step_lock);
+}
+
+void handle_crossroad_steps(){
+	lock_acquire(lock_running_threads_readers);
+	lock_acquire(step_lock);
+
+	vehicles_to_move--;
+	/* If all vehicles have moved, increase the step */
+	if(vehicles_to_move == 0) {
+		crossroads_step++;
+		vehicles_to_move = running_threads; // todo : reader - writer (Reader)
+	}
+
+	lock_release(step_lock);
 }
 
 /* release current preemption */
@@ -158,11 +183,13 @@ void vehicle_loop(void *_vi)
 	vi->state = VEHICLE_STATUS_READY;
 	step = 0;
 	while (1) {
+		// sema_down()
 		/* preempt next position */
 		preempt(start, dest, step, vi);
 
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
+		handle_crossroad_steps();
 		if (res == 1) {
 			step++;
 		}
@@ -177,8 +204,14 @@ void vehicle_loop(void *_vi)
 
 		/* unitstep change! */
 		unitstep_changed();
+		// sema_up()
 	}	
 
 	/* status transition must happen before sema_up */
 	vi->state = VEHICLE_STATUS_FINISHED;
+	lock_acquire(lock_running_threads_writers);
+	running_threads--;
+	lock_release(lock_running_threads_writers);
+	// lock_release()
+
 }

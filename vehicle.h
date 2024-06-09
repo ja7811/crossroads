@@ -19,5 +19,11 @@ struct vehicle_info {
 };
 
 void vehicle_loop(void *vi);
+int running_threads;
+int vehicles_to_move;
+struct lock *step_lock;
+struct lock *lock_running_threads_readers;
+struct lock *lock_running_threads_writers;
+int finished_threads = 0;
 
 #endif /* __PROJECTS_PROJECT2_VEHICLE_H__ */

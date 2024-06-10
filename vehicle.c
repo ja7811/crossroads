@@ -123,6 +123,8 @@ void init_on_mainthread(int thread_cnt){
 	threads_to_run = thread_cnt;
 
 	step_done = 0;
+	cond = (struct condition *) malloc(sizeof(struct condition));
+	cond_init(cond);
 }
 
 /* release current preemption */
@@ -170,6 +172,25 @@ void handle_step_increase(){
 	lock_release(mutex_lock);
 }
 
+void wait_for_other_vehicles(struct vehicle_info *vi){
+ 	/* Wait for all threads to complete the step */
+	lock_acquire(mutex_lock);
+	threads_to_run--;
+	// printf("%c enters (t=%d)\n", vi->id, threads_to_run);
+	if(threads_to_run > 0){
+		// printf("%c waiting\n", vi->id);
+		cond_wait(cond, mutex_lock);
+	} else {
+		threads_to_run = threads_running;
+		// printf("%c broadcasts (new t=%d)\n", vi->id, threads_to_run);
+		crossroads_step++;
+		// printf("======step %d======\n", crossroads_step);
+		cond_broadcast(cond, mutex_lock);
+	}
+	// printf("%c exits\n", vi->id);
+	lock_release(mutex_lock);
+}
+
 
 void vehicle_loop(void *_vi)
 {
@@ -185,8 +206,9 @@ void vehicle_loop(void *_vi)
 	vi->state = VEHICLE_STATUS_READY;
 	step = 0;
 	while (1) {
+		// printf("%c new step %d\n", vi->id, step);
 		sema_down(vehicle_sema);
-		handle_step_increase();
+		// handle_step_increase();
 		
 		/* preempt next position */
 		preempt(start, dest, step, vi);
@@ -206,12 +228,15 @@ void vehicle_loop(void *_vi)
 		preempt(start, dest, step, vi);
 		/* unitstep change! */
 		unitstep_changed();
+		wait_for_other_vehicles(vi);
 		sema_up(vehicle_sema);
 	}	
 
 	/* status transition must happen before sema_up */
+	// printf("%c finished\n", vi->id);
 	vi->state = VEHICLE_STATUS_FINISHED;
 	lock_acquire(mutex_lock);
+	threads_to_run--;
 	threads_running--;
 	lock_release(mutex_lock);
 }

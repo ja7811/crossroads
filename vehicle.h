@@ -21,12 +21,9 @@ struct vehicle_info {
 void vehicle_loop(void *vi);
 struct semaphore *vehicle_sema;
 struct lock *step_lock;
-int step_increased;
 
-int read_count; // temp
 int threads_running;
 int threads_to_run;
-struct semaphore *mutex; // temp
-struct semaphore *rw_mutex; //temp
+struct semaphore *mutex;
 
 #endif /* __PROJECTS_PROJECT2_VEHICLE_H__ */

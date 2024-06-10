@@ -27,4 +27,6 @@ struct lock *mutex_lock;
 
 int step_done;
 
+struct condition *cond;
+
 #endif /* __PROJECTS_PROJECT2_VEHICLE_H__ */

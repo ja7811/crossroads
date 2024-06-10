@@ -109,30 +109,21 @@ void init_on_mainthread(int thread_cnt){
 	/* Called once before spawning threads */
 	memset(preemption_table, PREEMPT_INIT, 7 * 7 * sizeof(char));
 	/* Initialize variables */
-	finished_threads = 0;
-	running_threads = thread_cnt;
-	vehicles_to_move = running_threads;
-	printf("running threads : &d\n", running_threads);
-	lock_running_threads_writers = (struct lock *)malloc(sizeof(struct lock));
-	lock_running_threads_readers = (struct lock *)malloc(sizeof(struct lock));
-	step_lock = (struct lock *)malloc(sizeof(struct lock));
-	lock_init(lock_running_threads_writers);
-	lock_init(lock_running_threads_readers);
+	printf("running threads: %d\n", thread_cnt);
+	vehicle_sema = (struct semaphore *) malloc(sizeof(struct semaphore));
+	sema_init(vehicle_sema, 1);
+	step_lock = (struct lock *) malloc(sizeof(struct lock));
 	lock_init(step_lock);
-}
+	step_increased = 0;
+	
+	read_count = 0;
+	mutex = (struct semaphore *) malloc(sizeof(struct semaphore));
+	sema_init(mutex, 1);
+	rw_mutex = (struct semaphore *) malloc(sizeof(struct semaphore));
+	sema_init(rw_mutex, 1);
 
-void handle_crossroad_steps(){
-	lock_acquire(lock_running_threads_readers);
-	lock_acquire(step_lock);
-
-	vehicles_to_move--;
-	/* If all vehicles have moved, increase the step */
-	if(vehicles_to_move == 0) {
-		crossroads_step++;
-		vehicles_to_move = running_threads; // todo : reader - writer (Reader)
-	}
-
-	lock_release(step_lock);
+	threads_running = thread_cnt;
+	threads_to_run = thread_cnt;
 }
 
 /* release current preemption */
@@ -169,6 +160,35 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 	intr_set_level (old_level);
 }
 
+void handle_step_increase(){
+	sema_down(mutex);
+	read_count++;
+	if(read_count == 1) sema_down(rw_mutex);
+	// printf("reader=%d\n", read_count);
+	sema_up(mutex);
+
+	lock_acquire(step_lock);
+	if(vehicle_sema->value == 0 && !step_increased) {
+		// printf("increasing step, (%d,%d) -> ", vehicle_sema->value, step_increased);
+		// crossroads_step++;
+	}
+	// printf("increased=%d", step_increased);
+	step_increased++;
+	// printf("->%d\n", step_increased);
+	lock_release(step_lock);
+
+	sema_down(mutex);
+	read_count--;
+	if(read_count == 0) sema_up(rw_mutex);
+	sema_up(mutex);
+}
+
+void set_step_increased(){
+	sema_down(rw_mutex);
+	step_increased = 0;
+	sema_up(rw_mutex);
+}
+
 void vehicle_loop(void *_vi)
 {
 	int res;
@@ -183,13 +203,13 @@ void vehicle_loop(void *_vi)
 	vi->state = VEHICLE_STATUS_READY;
 	step = 0;
 	while (1) {
-		// sema_down()
+		sema_down(vehicle_sema);
+		set_step_increased();
 		/* preempt next position */
 		preempt(start, dest, step, vi);
 
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
-		handle_crossroad_steps();
 		if (res == 1) {
 			step++;
 		}
@@ -203,15 +223,14 @@ void vehicle_loop(void *_vi)
 		preempt(start, dest, step, vi);
 
 		/* unitstep change! */
+		// printf("sema=%d\n", vehicle_sema->value);
+		handle_step_increase();
+		sema_up(vehicle_sema);
 		unitstep_changed();
-		// sema_up()
 	}	
 
 	/* status transition must happen before sema_up */
 	vi->state = VEHICLE_STATUS_FINISHED;
-	lock_acquire(lock_running_threads_writers);
-	running_threads--;
-	lock_release(lock_running_threads_writers);
-	// lock_release()
-
+	threads_to_run--;
+	sema_up(vehicle_sema);
 }

@@ -113,14 +113,16 @@ void init_on_mainthread(int thread_cnt){
 
 	vehicle_sema = (struct semaphore *) malloc(sizeof(struct semaphore));
 	mutex = (struct semaphore *) malloc(sizeof(struct semaphore));
-	sema_init(vehicle_sema, 1);
+	sema_init(vehicle_sema, thread_cnt);
 	sema_init(mutex, 1);
-	
-	step_lock = (struct lock *) malloc(sizeof(struct lock));
-	lock_init(step_lock);
+
+	mutex_lock = (struct lock *) malloc(sizeof(struct lock));
+	lock_init(mutex_lock);
 
 	threads_running = thread_cnt;
 	threads_to_run = thread_cnt;
+
+	step_done = 0;
 }
 
 /* release current preemption */
@@ -158,15 +160,14 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 }
 
 void handle_step_increase(){
-	lock_acquire(step_lock);
-
+	lock_acquire(mutex_lock);
 	threads_to_run--;
+	/* increase step if all vehicles have moved */
 	if(threads_to_run == 0){
 		threads_to_run = threads_running;
 		crossroads_step++;
 	}
-
-	lock_release(step_lock);
+	lock_release(mutex_lock);
 }
 
 
@@ -189,6 +190,7 @@ void vehicle_loop(void *_vi)
 		
 		/* preempt next position */
 		preempt(start, dest, step, vi);
+
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
 		if (res == 1) {
@@ -202,16 +204,14 @@ void vehicle_loop(void *_vi)
  
 		/* preempt next position */
 		preempt(start, dest, step, vi);
-
 		/* unitstep change! */
-		sema_up(vehicle_sema);
 		unitstep_changed();
+		sema_up(vehicle_sema);
 	}	
 
 	/* status transition must happen before sema_up */
 	vi->state = VEHICLE_STATUS_FINISHED;
-	sema_down(mutex);
-	threads_running--; // write to threads_running
-	sema_up(mutex);
-	sema_up(vehicle_sema);
+	lock_acquire(mutex_lock);
+	threads_running--;
+	lock_release(mutex_lock);
 }

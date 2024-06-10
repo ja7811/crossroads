@@ -110,17 +110,14 @@ void init_on_mainthread(int thread_cnt){
 	memset(preemption_table, PREEMPT_INIT, 7 * 7 * sizeof(char));
 	/* Initialize variables */
 	printf("running threads: %d\n", thread_cnt);
+
 	vehicle_sema = (struct semaphore *) malloc(sizeof(struct semaphore));
+	mutex = (struct semaphore *) malloc(sizeof(struct semaphore));
 	sema_init(vehicle_sema, 1);
+	sema_init(mutex, 1);
+	
 	step_lock = (struct lock *) malloc(sizeof(struct lock));
 	lock_init(step_lock);
-	step_increased = 0;
-	
-	read_count = 0;
-	mutex = (struct semaphore *) malloc(sizeof(struct semaphore));
-	sema_init(mutex, 1);
-	rw_mutex = (struct semaphore *) malloc(sizeof(struct semaphore));
-	sema_init(rw_mutex, 1);
 
 	threads_running = thread_cnt;
 	threads_to_run = thread_cnt;
@@ -161,33 +158,17 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 }
 
 void handle_step_increase(){
-	sema_down(mutex);
-	read_count++;
-	if(read_count == 1) sema_down(rw_mutex);
-	// printf("reader=%d\n", read_count);
-	sema_up(mutex);
-
 	lock_acquire(step_lock);
-	if(vehicle_sema->value == 0 && !step_increased) {
-		// printf("increasing step, (%d,%d) -> ", vehicle_sema->value, step_increased);
-		// crossroads_step++;
+
+	threads_to_run--;
+	if(threads_to_run == 0){
+		threads_to_run = threads_running;
+		crossroads_step++;
 	}
-	// printf("increased=%d", step_increased);
-	step_increased++;
-	// printf("->%d\n", step_increased);
+
 	lock_release(step_lock);
-
-	sema_down(mutex);
-	read_count--;
-	if(read_count == 0) sema_up(rw_mutex);
-	sema_up(mutex);
 }
 
-void set_step_increased(){
-	sema_down(rw_mutex);
-	step_increased = 0;
-	sema_up(rw_mutex);
-}
 
 void vehicle_loop(void *_vi)
 {
@@ -204,10 +185,10 @@ void vehicle_loop(void *_vi)
 	step = 0;
 	while (1) {
 		sema_down(vehicle_sema);
-		set_step_increased();
+		handle_step_increase();
+		
 		/* preempt next position */
 		preempt(start, dest, step, vi);
-
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
 		if (res == 1) {
@@ -218,19 +199,19 @@ void vehicle_loop(void *_vi)
 		if (res == 0) {
 			break;
 		}
-
+ 
 		/* preempt next position */
 		preempt(start, dest, step, vi);
 
 		/* unitstep change! */
-		// printf("sema=%d\n", vehicle_sema->value);
-		handle_step_increase();
 		sema_up(vehicle_sema);
 		unitstep_changed();
 	}	
 
 	/* status transition must happen before sema_up */
 	vi->state = VEHICLE_STATUS_FINISHED;
-	threads_to_run--;
+	sema_down(mutex);
+	threads_running--; // write to threads_running
+	sema_up(mutex);
 	sema_up(vehicle_sema);
 }

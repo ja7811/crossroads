@@ -9,6 +9,7 @@
 #include "projects/crossroads/ats.h"
 
 const char PREEMPT_INIT = 127;
+const char DEBUG = 0;
 
 /* path. A:0 B:1 C:2 D:3 */
 const struct position vehicle_path[4][4][12] = {
@@ -122,9 +123,14 @@ void init_on_mainthread(int thread_cnt){
 	threads_running = thread_cnt;
 	threads_to_run = thread_cnt;
 
-	step_done = 0;
+	step_completed = 0;
 	cond = (struct condition *) malloc(sizeof(struct condition));
 	cond_init(cond);
+
+	finished_thread_cnt = 0;
+	TOTAL_THREADS = thread_cnt;
+	blocked_threads = (struct list *) malloc(sizeof(struct list));
+	list_init(blocked_threads);
 }
 
 /* release current preemption */
@@ -172,25 +178,62 @@ void handle_step_increase(){
 	lock_release(mutex_lock);
 }
 
+void block_thread(){
+    enum intr_level old_level;
+    old_level = intr_disable ();
+    list_push_back(blocked_threads, &thread_current () -> elem);
+
+    thread_block ();
+    intr_set_level (old_level);
+}
+
+void unblock_threads(){
+   enum intr_level old_level;
+   old_level = intr_disable();
+   while(!list_empty(blocked_threads)){
+    struct thread* popped_thread = list_entry( list_pop_front(blocked_threads), struct thread, elem);
+    thread_unblock(popped_thread);
+   }
+
+   intr_set_level(old_level);
+}
+
+void sync_vehicles(){
+	lock_acquire(mutex_lock);
+	step_completed++;
+	lock_release(mutex_lock);
+	if(step_completed < TOTAL_THREADS){
+		// Some other threads remain incomplete
+		block_thread();
+	} else {
+		// all threads have completed
+		lock_acquire(mutex_lock);
+		step_completed = finished_thread_cnt;
+		unblock_threads();
+		lock_release(mutex_lock);
+	}
+}
+
 void wait_for_other_vehicles(struct vehicle_info *vi){
  	/* Wait for all threads to complete the step */
 	lock_acquire(mutex_lock);
-	threads_to_run--;
-	// printf("%c enters (t=%d)\n", vi->id, threads_to_run);
-	if(threads_to_run > 0){
-		// printf("%c waiting\n", vi->id);
-		cond_wait(cond, mutex_lock);
-	} else {
-		threads_to_run = threads_running;
-		// printf("%c broadcasts (new t=%d)\n", vi->id, threads_to_run);
-		crossroads_step++;
-		// printf("======step %d======\n", crossroads_step);
-		cond_broadcast(cond, mutex_lock);
-	}
-	// printf("%c exits\n", vi->id);
+	step_completed++;
 	lock_release(mutex_lock);
+	if(step_completed < TOTAL_THREADS){
+		// Some other threads remain incomplete
+		if(DEBUG) ("blocking %c (complete=%d)\n", vi->id, step_completed);
+		block_thread();
+	} else {
+		// all threads have completed
+		lock_acquire(mutex_lock);
+		step_completed = finished_thread_cnt;
+		crossroads_step++;
+		if(DEBUG) printf("unblocking by %c (complete=%d)\n", vi->id, step_completed);
+		if(DEBUG) printf("======step %d======\n", crossroads_step);
+		unblock_threads();
+		lock_release(mutex_lock);
+	}
 }
-
 
 void vehicle_loop(void *_vi)
 {
@@ -212,9 +255,10 @@ void vehicle_loop(void *_vi)
 		
 		/* preempt next position */
 		preempt(start, dest, step, vi);
-
+		if(DEBUG) printf("%c preempted\n", vi->id);
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
+		if(DEBUG) printf("%c moved\n", vi->id);
 		if (res == 1) {
 			step++;
 		}
@@ -223,12 +267,13 @@ void vehicle_loop(void *_vi)
 		if (res == 0) {
 			break;
 		}
- 
 		/* preempt next position */
 		preempt(start, dest, step, vi);
+ 
 		/* unitstep change! */
 		unitstep_changed();
 		wait_for_other_vehicles(vi);
+		if(DEBUG) printf("%c preempted\n", vi->id);
 		sema_up(vehicle_sema);
 	}	
 
@@ -236,7 +281,9 @@ void vehicle_loop(void *_vi)
 	// printf("%c finished\n", vi->id);
 	vi->state = VEHICLE_STATUS_FINISHED;
 	lock_acquire(mutex_lock);
-	threads_to_run--;
-	threads_running--;
+	// if(threads_running == threads_to_run) threads_to_run--;
+	// threads_running--;
+	if(finished_thread_cnt == step_completed) step_completed++;
+	finished_thread_cnt++;
 	lock_release(mutex_lock);
 }

@@ -132,6 +132,9 @@ void init_on_mainthread(int thread_cnt){
 	CURRENT_THREADS_CNT = thread_cnt;
 	blocked_threads = (struct list *) malloc(sizeof(struct list));
 	list_init(blocked_threads);
+
+	thread_count_lock = (struct lock *) malloc(sizeof(struct lock));
+	lock_init(thread_count_lock);
 }
 
 /* release current preemption */
@@ -148,8 +151,7 @@ void preempt_release(struct vehicle_info *vi){
 }
 
 void preempt(int start, int dest, int step, struct vehicle_info *vi){
-	enum intr_level old_level;
-	old_level = intr_disable ();
+	sema_down(mutex);
 
 	struct position pos = vehicle_path[start][dest][step];
 	while(!is_position_outside(pos)){
@@ -164,8 +166,7 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 		pos = vehicle_path[start][dest][++step];
 	}
 	
-
-	intr_set_level (old_level);
+	sema_up(mutex);	
 }
 
 void handle_step_increase(){
@@ -183,14 +184,13 @@ void wait_for_other_vehicles(struct vehicle_info *vi){
  	/* Wait for all threads to complete the step */
 	lock_acquire(mutex_lock);
 	step_completed++;
-	lock_release(mutex_lock);
 	if(step_completed < CURRENT_THREADS_CNT){
 		// Some other threads remain incomplete
 		if(DEBUG) printf("blocking %c (s=%d)\n", vi->id, step_completed);
+		lock_release(mutex_lock);
 		sema_down(vehicle_sema);
 	} else {
 		// all threads have completed
-		lock_acquire(mutex_lock);
 		step_completed = 0;
 		crossroads_step++;
 		if(DEBUG) printf("unblocking by %c (s=%d)\n", vi->id, step_completed);
@@ -232,7 +232,7 @@ void vehicle_loop(void *_vi)
 			break;
 		}
 		/* preempt next position */
-		preempt(start, dest, step, vi);
+		// preempt(start, dest, step, vi);
  
 		/* unitstep change! */
 		unitstep_changed();
@@ -243,7 +243,7 @@ void vehicle_loop(void *_vi)
 	/* status transition must happen before sema_up */
 	// printf("%c finished\n", vi->id);
 	vi->state = VEHICLE_STATUS_FINISHED;
-	lock_acquire(mutex_lock);
+	lock_acquire(thread_count_lock);
 	CURRENT_THREADS_CNT--;
-	lock_release(mutex_lock);
+	lock_release(thread_count_lock);
 }

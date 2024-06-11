@@ -25,6 +25,7 @@ int threads_running;
 int threads_to_run;
 struct semaphore *mutex;
 struct lock *mutex_lock;
+struct lock *thread_count_lock;
 
 int finished_thread_cnt;
 int step_completed;

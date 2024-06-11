@@ -19,18 +19,15 @@ struct vehicle_info {
 };
 
 void vehicle_loop(void *vi);
+
 struct semaphore *vehicle_sema;
+
 int CURRENT_THREADS_CNT;
-int threads_running;
-int threads_to_run;
+int step_completed;
+
 struct semaphore *mutex;
 struct lock *mutex_lock;
 struct lock *thread_count_lock;
 
-int finished_thread_cnt;
-int step_completed;
-
-struct condition *cond;
-struct list *blocked_threads;
 
 #endif /* __PROJECTS_PROJECT2_VEHICLE_H__ */

@@ -121,17 +121,8 @@ void init_on_mainthread(int thread_cnt){
 	mutex_lock = (struct lock *) malloc(sizeof(struct lock));
 	lock_init(mutex_lock);
 
-	threads_running = thread_cnt;
-	threads_to_run = thread_cnt;
-
 	step_completed = 0;
-	cond = (struct condition *) malloc(sizeof(struct condition));
-	cond_init(cond);
-
-	finished_thread_cnt = 0;
-	CURRENT_THREADS_CNT = thread_cnt;
-	blocked_threads = (struct list *) malloc(sizeof(struct list));
-	list_init(blocked_threads);
+	CURRENT_THREADS_CNT = thread_cnt;;
 
 	thread_count_lock = (struct lock *) malloc(sizeof(struct lock));
 	lock_init(thread_count_lock);
@@ -151,7 +142,8 @@ void preempt_release(struct vehicle_info *vi){
 }
 
 void preempt(int start, int dest, int step, struct vehicle_info *vi){
-	sema_down(mutex);
+	enum intr_level old_level;
+	old_level = intr_disable();
 
 	struct position pos = vehicle_path[start][dest][step];
 	while(!is_position_outside(pos)){
@@ -166,21 +158,28 @@ void preempt(int start, int dest, int step, struct vehicle_info *vi){
 		pos = vehicle_path[start][dest][++step];
 	}
 	
-	sema_up(mutex);	
+	intr_set_level(old_level);
 }
 
-void handle_step_increase(){
+void sync_vehicles(){
+	/* Wait for all threads to complete the step */
 	lock_acquire(mutex_lock);
-	threads_to_run--;
-	/* increase step if all vehicles have moved */
-	if(threads_to_run == 0){
-		threads_to_run = threads_running;
-		crossroads_step++;
+	step_completed++;
+	if(step_completed < CURRENT_THREADS_CNT){
+		// Some other threads remain incomplete
+		lock_release(mutex_lock);
+		sema_down(vehicle_sema);
+	} else {
+		// all threads have completed
+		step_completed = 0;
+		for(int i = 1; i < CURRENT_THREADS_CNT; i++){
+			sema_up(vehicle_sema);
+		}
+		lock_release(mutex_lock);
 	}
-	lock_release(mutex_lock);
 }
 
-void wait_for_other_vehicles(struct vehicle_info *vi){
+void sync_step(struct vehicle_info *vi){
  	/* Wait for all threads to complete the step */
 	lock_acquire(mutex_lock);
 	step_completed++;
@@ -236,7 +235,7 @@ void vehicle_loop(void *_vi)
  
 		/* unitstep change! */
 		unitstep_changed();
-		wait_for_other_vehicles(vi);
+		sync_step(vi);
 		if(DEBUG) printf("%c preempted\n", vi->id);;
 	}	
 

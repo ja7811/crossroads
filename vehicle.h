@@ -20,7 +20,7 @@ struct vehicle_info {
 
 void vehicle_loop(void *vi);
 struct semaphore *vehicle_sema;
-int TOTAL_THREADS;
+int CURRENT_THREADS_CNT;
 int threads_running;
 int threads_to_run;
 struct semaphore *mutex;

@@ -185,15 +185,12 @@ void sync_step(struct vehicle_info *vi){
 	step_completed++;
 	if(step_completed < CURRENT_THREADS_CNT){
 		// Some other threads remain incomplete
-		if(DEBUG) printf("blocking %c (s=%d)\n", vi->id, step_completed);
 		lock_release(mutex_lock);
 		sema_down(vehicle_sema);
 	} else {
 		// all threads have completed
 		step_completed = 0;
 		crossroads_step++;
-		if(DEBUG) printf("unblocking by %c (s=%d)\n", vi->id, step_completed);
-		if(DEBUG) printf("======step %d======\n", crossroads_step);
 		for(int i = 1; i < CURRENT_THREADS_CNT; i++){
 			sema_up(vehicle_sema);
 		}
@@ -217,10 +214,8 @@ void vehicle_loop(void *_vi)
 	while (1) {		
 		/* preempt next position */
 		preempt(start, dest, step, vi);
-		if(DEBUG) printf("%c preempted\n", vi->id);
 		/* vehicle main code */
 		res = try_move(start, dest, step, vi);
-		if(DEBUG) printf("%c moved\n", vi->id);
 
 		if (res == 1) {
 			step++;
@@ -230,17 +225,13 @@ void vehicle_loop(void *_vi)
 		if (res == 0) {
 			break;
 		}
-		/* preempt next position */
-		// preempt(start, dest, step, vi);
  
 		/* unitstep change! */
 		unitstep_changed();
 		sync_step(vi);
-		if(DEBUG) printf("%c preempted\n", vi->id);;
 	}	
 
 	/* status transition must happen before sema_up */
-	// printf("%c finished\n", vi->id);
 	vi->state = VEHICLE_STATUS_FINISHED;
 	lock_acquire(thread_count_lock);
 	CURRENT_THREADS_CNT--;
